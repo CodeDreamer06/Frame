@@ -1,454 +1,648 @@
 "use client";
 
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "../components/Sidebar";
 
-interface ApiKey {
-  id: string;
-  name: string;
-  key: string;
-  provider: string;
-  isActive: boolean;
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
+
+type TabId = "api" | "output" | "advanced";
+type Provider = "openai" | "stability" | "replicate";
+type ConnectionStatus = "connected" | "untested" | "error";
+type OutputFormat = "PNG" | "JPEG" | "WebP";
+type SizePreset = "1024×1024" | "1024×1792" | "1792×1024";
+
+const tabs: { id: TabId; label: string }[] = [
+  { id: "api", label: "API" },
+  { id: "output", label: "Output" },
+  { id: "advanced", label: "Advanced" },
+];
+
+const providers: { id: Provider; name: string; description: string }[] = [
+  { id: "openai", name: "OpenAI", description: "DALL·E 3, GPT-Image" },
+  { id: "stability", name: "Stability AI", description: "Stable Diffusion XL, SD3" },
+  { id: "replicate", name: "Replicate", description: "Community models, Flux" },
+];
+
+const models: Record<Provider, string[]> = {
+  openai: ["gpt-image-1", "dall-e-3", "dall-e-2"],
+  stability: ["stable-diffusion-xl", "sd3-medium", "sd3-large"],
+  replicate: ["flux-1.1-pro", "flux-schnell", "sdxl"],
+};
+
+const sizePresets: SizePreset[] = ["1024×1024", "1024×1792", "1792×1024"];
+const formats: OutputFormat[] = ["PNG", "JPEG", "WebP"];
+
+/* ------------------------------------------------------------------ */
+/*  Shared transition style (never transition-all)                     */
+/* ------------------------------------------------------------------ */
+
+const borderTransition = {
+  transitionProperty: "border-color, background-color",
+  transitionDuration: "var(--dur-short)",
+  transitionTimingFunction: "var(--ease-out)",
+};
+
+const colorTransition = {
+  transitionProperty: "color, background-color",
+  transitionDuration: "var(--dur-short)",
+  transitionTimingFunction: "var(--ease-out)",
+};
+
+/* ------------------------------------------------------------------ */
+/*  Crossfade animation variants                                       */
+/* ------------------------------------------------------------------ */
+
+const fadeVariants = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+};
+
+const fadeTransition = {
+  duration: 0.15,
+  ease: [0.16, 1, 0.3, 1] as const,
+};
+
+/* ------------------------------------------------------------------ */
+/*  Toggle Switch                                                      */
+/* ------------------------------------------------------------------ */
+
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative w-10 h-[22px] rounded-full shrink-0 ${
+        checked ? "bg-accent" : "bg-paper-3 border border-rule"
+      }`}
+      style={borderTransition}
+    >
+      <motion.span
+        className="absolute top-[3px] w-4 h-4 rounded-full bg-paper shadow-sm"
+        animate={{ left: checked ? 20 : 3 }}
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+      />
+    </button>
+  );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Status Dot                                                         */
+/* ------------------------------------------------------------------ */
+
+function StatusDot({ status }: { status: ConnectionStatus }) {
+  const color =
+    status === "connected"
+      ? "bg-success"
+      : status === "error"
+      ? "bg-error"
+      : "bg-warning";
+
+  const label =
+    status === "connected"
+      ? "Connected"
+      : status === "error"
+      ? "Connection failed"
+      : "Not tested";
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`w-2 h-2 rounded-full ${color}`} />
+      <span className="text-xs text-neutral">{label}</span>
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Inline Spinner                                                     */
+/* ------------------------------------------------------------------ */
+
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin h-3.5 w-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="3"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
+  );
+}
+
+/* ================================================================== */
+/*  Page                                                               */
+/* ================================================================== */
+
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState("api");
-  const [baseUrl, setBaseUrl] = useState("https://api.openai.com/v1");
-  const [timeout, setTimeout] = useState(30);
-  const [retries, setRetries] = useState(3);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([
-    { id: "1", name: "Primary Key", key: "sk-••••••••••••••••••••••••••••••", provider: "OpenAI", isActive: true },
-    { id: "2", name: "Backup Key", key: "sk-••••••••••••••••••••••••••••••", provider: "OpenAI", isActive: true },
-  ]);
-  const [showAddKey, setShowAddKey] = useState(false);
-  const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyValue, setNewKeyValue] = useState("");
-  const [newKeyProvider, setNewKeyProvider] = useState("OpenAI");
+  /* --- Tab state --- */
+  const [activeTab, setActiveTab] = useState<TabId>("api");
 
-  const addApiKey = () => {
-    if (!newKeyName.trim() || !newKeyValue.trim()) return;
-    setApiKeys([
-      ...apiKeys,
-      {
-        id: Date.now().toString(),
-        name: newKeyName,
-        key: newKeyValue.slice(0, 7) + "••••••••••••••••••••••••••••••",
-        provider: newKeyProvider,
-        isActive: true,
-      },
-    ]);
-    setNewKeyName("");
-    setNewKeyValue("");
-    setShowAddKey(false);
+  /* --- API tab state --- */
+  const [provider, setProvider] = useState<Provider>("openai");
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(models.openai[0]);
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>("untested");
+  const [isTesting, setIsTesting] = useState(false);
+
+  /* --- Output tab state --- */
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("PNG");
+  const [quality, setQuality] = useState(80);
+  const [sizePreset, setSizePreset] = useState<SizePreset>("1024×1024");
+  const [autoSave, setAutoSave] = useState(true);
+  const outputDir = "~/Documents/Frame/output";
+
+  /* --- Advanced tab state --- */
+  const [historyRetention, setHistoryRetention] = useState("30");
+
+  /* --- Handlers --- */
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    // Simulate network request
+    await new Promise((r) => window.setTimeout(r, 1500));
+    setConnectionStatus(apiKey.length > 0 ? "connected" : "error");
+    setIsTesting(false);
   };
 
-  const toggleKey = (id: string) => {
-    setApiKeys(
-      apiKeys.map((k) => (k.id === id ? { ...k, isActive: !k.isActive } : k))
-    );
+  const handleProviderChange = (p: Provider) => {
+    setProvider(p);
+    setSelectedModel(models[p][0]);
+    setConnectionStatus("untested");
   };
 
-  const removeKey = (id: string) => {
-    setApiKeys(apiKeys.filter((k) => k.id !== id));
-  };
+  /* --- Reusable label --- */
+  const FieldLabel = ({
+    children,
+    htmlFor,
+  }: {
+    children: React.ReactNode;
+    htmlFor?: string;
+  }) => (
+    <label
+      htmlFor={htmlFor}
+      className="block text-xs font-medium text-muted mb-1.5"
+    >
+      {children}
+    </label>
+  );
 
-  const tabs = [
-    { id: "api", label: "API Configuration" },
-    { id: "output", label: "Output Defaults" },
-    { id: "storage", label: "Storage" },
-    { id: "advanced", label: "Advanced" },
-  ];
+  const HelperText = ({ children }: { children: React.ReactNode }) => (
+    <p className="text-xs text-neutral mt-1.5">{children}</p>
+  );
+
+  const inputClass =
+    "w-full bg-paper-3 border border-rule rounded-md px-3 py-2.5 text-sm text-ink placeholder:text-neutral outline-none focus-visible:border-accent";
+
+  /* ================================================================ */
+  /*  Render                                                           */
+  /* ================================================================ */
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 flex flex-col min-w-0 bg-[var(--bg)]">
-        {/* Header */}
-        <header className="h-14 border-b border-[var(--border)] flex items-center px-6 shrink-0">
-          <h1 className="font-[family-name:var(--font-manrope)] text-base font-semibold text-[var(--text1)]">
+
+      <main className="flex-1 flex flex-col min-w-0 bg-paper">
+        {/* ---- Header ---- */}
+        <header className="h-14 border-b border-rule flex items-center justify-between px-6 shrink-0">
+          <h1 className="font-display text-base font-semibold text-ink">
             Settings
           </h1>
         </header>
 
-        {/* Tabs */}
-        <div className="px-6 border-b border-[var(--border)]">
-          <div className="flex items-center gap-1 -mb-px">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? "border-[var(--accent)] text-[var(--accent)]"
-                    : "border-transparent text-[var(--text3)] hover:text-[var(--text1)]"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+        {/* ---- Tabs ---- */}
+        <div className="px-6 border-b border-rule">
+          <div className="flex items-center gap-6 -mb-px">
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`relative pb-3 pt-3 text-sm font-medium ${
+                    isActive ? "text-ink" : "text-muted"
+                  }`}
+                  style={colorTransition}
+                >
+                  {tab.label}
+
+                  {isActive && (
+                    <motion.span
+                      layoutId="settings-tab"
+                      className="absolute inset-x-0 bottom-0 h-0.5 bg-accent rounded-full"
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 30,
+                      }}
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Content */}
+        {/* ---- Content ---- */}
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-2xl mx-auto space-y-8">
-            {/* API Configuration */}
-            {activeTab === "api" && (
-              <>
-                <section>
-                  <h2 className="font-[family-name:var(--font-manrope)] text-lg font-semibold text-[var(--text1)] mb-1">
+          <div className="max-w-2xl mx-auto">
+            <AnimatePresence mode="wait">
+              {/* ============================================== */}
+              {/*  API TAB                                        */}
+              {/* ============================================== */}
+              {activeTab === "api" && (
+                <motion.div
+                  key="api"
+                  variants={fadeVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={fadeTransition}
+                  className="space-y-8"
+                >
+                  {/* Section heading */}
+                  <h2 className="font-display text-sm font-semibold text-ink-2 mb-4">
                     API Configuration
                   </h2>
-                  <p className="text-sm text-[var(--text3)] mb-6">
-                    Configure your AI provider settings and manage API keys.
-                  </p>
 
-                  <div className="space-y-5">
-                    {/* Base URL */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">
-                        Base URL
-                      </label>
-                      <input
-                        type="text"
-                        value={baseUrl}
-                        onChange={(e) => setBaseUrl(e.target.value)}
-                        placeholder="https://api.openai.com/v1"
-                        className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] placeholder:text-[var(--text4)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                      />
-                      <p className="text-xs text-[var(--text3)]">
-                        Custom endpoint for self-hosted or proxy setups
-                      </p>
-                    </div>
-
-                    {/* Timeout & Retries */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-[var(--text1)]">
-                          Timeout (seconds)
-                        </label>
-                        <input
-                          type="number"
-                          value={timeout}
-                          onChange={(e) => setTimeout(Number(e.target.value))}
-                          min="5"
-                          max="120"
-                          className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium text-[var(--text1)]">
-                          Max Retries
-                        </label>
-                        <input
-                          type="number"
-                          value={retries}
-                          onChange={(e) => setRetries(Number(e.target.value))}
-                          min="0"
-                          max="10"
-                          className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)] transition-colors"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                {/* API Keys */}
-                <section>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="font-[family-name:var(--font-manrope)] text-base font-semibold text-[var(--text1)]">
-                        API Keys
-                      </h3>
-                      <p className="text-xs text-[var(--text3)] mt-0.5">
-                        Multiple keys are rotated in round-robin fashion
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowAddKey(true)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
-                    >
-                      Add Key
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    {apiKeys.map((key) => (
-                      <div
-                        key={key.id}
-                        className="flex items-center gap-4 p-3 rounded-xl bg-[var(--surface1)] border border-[var(--border)]"
-                      >
-                        <button
-                          onClick={() => toggleKey(key.id)}
-                          className={`w-9 h-5 rounded-full transition-colors relative ${
-                            key.isActive ? "bg-[var(--accent)]" : "bg-[var(--surface3)]"
-                          }`}
-                        >
-                          <span
-                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
-                              key.isActive ? "left-[18px]" : "left-0.5"
+                  {/* Provider selector */}
+                  <div>
+                    <FieldLabel>Provider</FieldLabel>
+                    <div className="grid grid-cols-3 gap-3 mt-1.5">
+                      {providers.map((p) => {
+                        const isSelected = provider === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => handleProviderChange(p.id)}
+                            className={`text-left p-3 rounded-lg border ${
+                              isSelected
+                                ? "border-accent bg-accent-subtle"
+                                : "border-rule bg-paper-3"
                             }`}
-                          />
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-[var(--text1)]">{key.name}</p>
-                          <p className="text-xs text-[var(--text3)] font-mono">{key.key}</p>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--surface2)] text-[var(--text3)]">
-                          {key.provider}
-                        </span>
-                        <button
-                          onClick={() => removeKey(key.id)}
-                          className="p-1.5 rounded-md text-[var(--text4)] hover:text-[var(--error)] hover:bg-[var(--error)]/10 transition-colors"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 6h18" />
-                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
+                            style={borderTransition}
+                          >
+                            <span className="block text-sm font-medium text-ink">
+                              {p.name}
+                            </span>
+                            <span className="block text-xs text-neutral mt-0.5">
+                              {p.description}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  {/* Add Key Form */}
-                  {showAddKey && (
-                    <div className="mt-4 p-4 rounded-xl bg-[var(--surface1)] border border-[var(--border)] space-y-3">
-                      <h4 className="text-sm font-medium text-[var(--text1)]">Add New API Key</h4>
+                  {/* API Key */}
+                  <div>
+                    <FieldLabel htmlFor="api-key">API Key</FieldLabel>
+                    <div className="relative">
                       <input
-                        type="text"
-                        value={newKeyName}
-                        onChange={(e) => setNewKeyName(e.target.value)}
-                        placeholder="Key name (e.g., Production)"
-                        className="w-full px-3 py-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text1)] placeholder:text-[var(--text4)] focus:outline-none focus:border-[var(--accent)]"
-                      />
-                      <input
-                        type="password"
-                        value={newKeyValue}
-                        onChange={(e) => setNewKeyValue(e.target.value)}
+                        id="api-key"
+                        type={showKey ? "text" : "password"}
+                        value={apiKey}
+                        onChange={(e) => {
+                          setApiKey(e.target.value);
+                          setConnectionStatus("untested");
+                        }}
                         placeholder="sk-..."
-                        className="w-full px-3 py-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text1)] placeholder:text-[var(--text4)] focus:outline-none focus:border-[var(--accent)]"
+                        className={`${inputClass} pr-10`}
+                        style={borderTransition}
                       />
-                      <select
-                        value={newKeyProvider}
-                        onChange={(e) => setNewKeyProvider(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg bg-[var(--bg)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)]"
+                      <button
+                        type="button"
+                        onClick={() => setShowKey(!showKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral"
+                        style={colorTransition}
+                        aria-label={showKey ? "Hide key" : "Show key"}
                       >
-                        <option>OpenAI</option>
-                        <option>Stability AI</option>
-                        <option>Anthropic</option>
-                        <option>Custom</option>
-                      </select>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={addApiKey}
-                          className="px-4 py-2 rounded-lg text-xs font-medium bg-[var(--accent)] text-white hover:bg-[var(--accent-hover)] transition-colors"
-                        >
-                          Add Key
-                        </button>
-                        <button
-                          onClick={() => setShowAddKey(false)}
-                          className="px-4 py-2 rounded-lg text-xs font-medium text-[var(--text3)] hover:text-[var(--text1)] hover:bg-[var(--surface2)] transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
+                        {showKey ? (
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        ) : (
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
+                      </button>
                     </div>
-                  )}
-                </section>
-              </>
-            )}
+                    <HelperText>
+                      Your key is stored locally and never sent to our servers.
+                    </HelperText>
+                  </div>
 
-            {/* Output Defaults */}
-            {activeTab === "output" && (
-              <>
-                <section>
-                  <h2 className="font-[family-name:var(--font-manrope)] text-lg font-semibold text-[var(--text1)] mb-1">
+                  {/* Model selector */}
+                  <div>
+                    <FieldLabel htmlFor="model-select">Model</FieldLabel>
+                    <select
+                      id="model-select"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className={inputClass}
+                      style={borderTransition}
+                    >
+                      {models[provider].map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Test connection + status */}
+                  <div className="flex items-center gap-4">
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleTestConnection}
+                      disabled={isTesting || !apiKey}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium bg-paper-3 border border-rule text-muted disabled:opacity-50"
+                      style={borderTransition}
+                    >
+                      {isTesting && <Spinner />}
+                      {isTesting ? "Testing\u2026" : "Test connection"}
+                    </motion.button>
+
+                    <StatusDot status={connectionStatus} />
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ============================================== */}
+              {/*  OUTPUT TAB                                      */}
+              {/* ============================================== */}
+              {activeTab === "output" && (
+                <motion.div
+                  key="output"
+                  variants={fadeVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={fadeTransition}
+                  className="space-y-8"
+                >
+                  <h2 className="font-display text-sm font-semibold text-ink-2 mb-4">
                     Output Defaults
                   </h2>
-                  <p className="text-sm text-[var(--text3)] mb-6">
-                    Default settings for image generation.
-                  </p>
 
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Default Size</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {["1024x1024", "1024x1792", "1792x1024"].map((size) => (
+                  {/* Format selector */}
+                  <div>
+                    <FieldLabel>Default Format</FieldLabel>
+                    <div className="flex gap-2 mt-1.5">
+                      {formats.map((fmt) => {
+                        const isSelected = outputFormat === fmt;
+                        return (
+                          <motion.button
+                            key={fmt}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => setOutputFormat(fmt)}
+                            className={`px-4 py-2.5 rounded-lg text-sm font-medium ${
+                              isSelected
+                                ? "bg-accent text-accent-ink"
+                                : "bg-paper-3 border border-rule text-muted"
+                            }`}
+                            style={borderTransition}
+                          >
+                            {fmt}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Quality slider */}
+                  <div>
+                    <div className="flex items-baseline justify-between mb-1.5">
+                      <FieldLabel>Default Quality</FieldLabel>
+                      <span className="text-xs font-mono text-neutral">
+                        {quality}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={quality}
+                      onChange={(e) => setQuality(Number(e.target.value))}
+                      className="w-full accent-[var(--color-accent)] h-1.5 rounded-full bg-paper-3"
+                    />
+                    <HelperText>
+                      Higher quality increases file size. 80% is a good balance.
+                    </HelperText>
+                  </div>
+
+                  {/* Size preset */}
+                  <div>
+                    <FieldLabel>Default Size</FieldLabel>
+                    <div className="grid grid-cols-3 gap-2 mt-1.5">
+                      {sizePresets.map((size) => {
+                        const isSelected = sizePreset === size;
+                        return (
                           <button
                             key={size}
-                            className="px-3 py-2 rounded-lg text-xs font-medium bg-[var(--surface1)] text-[var(--text2)] border border-[var(--border)] hover:border-[var(--border-visible)] transition-all"
+                            onClick={() => setSizePreset(size)}
+                            className={`px-3 py-2.5 rounded-md text-xs font-mono font-medium ${
+                              isSelected
+                                ? "border-accent bg-accent-subtle text-ink border"
+                                : "bg-paper-3 border border-rule text-muted"
+                            }`}
+                            style={borderTransition}
                           >
                             {size}
                           </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Default Quality</label>
-                      <select className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)]">
-                        <option>Standard</option>
-                        <option selected>HD</option>
-                        <option>Ultra</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Default Style</label>
-                      <select className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)]">
-                        <option selected>Vivid</option>
-                        <option>Natural</option>
-                        <option>Cinematic</option>
-                        <option>Anime</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Default Format</label>
-                      <div className="flex gap-2">
-                        {["PNG", "JPEG", "WebP"].map((fmt) => (
-                          <button
-                            key={fmt}
-                            className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${
-                              fmt === "PNG"
-                                ? "bg-[var(--accent)] text-white"
-                                : "bg-[var(--surface1)] text-[var(--text2)] border border-[var(--border)] hover:border-[var(--border-visible)]"
-                            }`}
-                          >
-                            {fmt}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Default Background</label>
-                      <select className="w-full px-3 py-2.5 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] focus:outline-none focus:border-[var(--accent)]">
-                        <option selected>Auto</option>
-                        <option>Transparent</option>
-                        <option>Solid</option>
-                        <option>Blur</option>
-                      </select>
+                        );
+                      })}
                     </div>
                   </div>
-                </section>
-              </>
-            )}
 
-            {/* Storage */}
-            {activeTab === "storage" && (
-              <>
-                <section>
-                  <h2 className="font-[family-name:var(--font-manrope)] text-lg font-semibold text-[var(--text1)] mb-1">
-                    Local Storage
-                  </h2>
-                  <p className="text-sm text-[var(--text3)] mb-6">
-                    Manage your local IndexedDB storage.
-                  </p>
-
-                  <div className="space-y-5">
-                    <div className="p-4 rounded-xl bg-[var(--surface1)] border border-[var(--border)]">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-[var(--text1)]">Storage Used</span>
-                        <span className="text-sm text-[var(--text3)]">142 MB / 5 GB</span>
-                      </div>
-                      <div className="w-full h-2 rounded-full bg-[var(--surface3)] overflow-hidden">
-                        <div className="h-full w-[3%] rounded-full bg-[var(--accent)]" />
-                      </div>
+                  {/* Auto-save toggle */}
+                  <div className="flex items-center justify-between p-4 rounded-lg bg-paper-3 border border-rule">
+                    <div>
+                      <p className="text-sm font-medium text-ink">
+                        Auto-save generations
+                      </p>
+                      <p className="text-xs text-neutral mt-0.5">
+                        Save all generated images to the output directory
+                      </p>
                     </div>
+                    <Toggle checked={autoSave} onChange={setAutoSave} />
+                  </div>
 
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)]">
-                        <div>
-                          <p className="text-sm font-medium text-[var(--text1)]">Auto-save generations</p>
-                          <p className="text-xs text-[var(--text3)]">Save all generated images automatically</p>
-                        </div>
-                        <button className="w-9 h-5 rounded-full bg-[var(--accent)] relative">
-                          <span className="absolute top-0.5 left-[18px] w-4 h-4 rounded-full bg-white shadow-sm" />
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)]">
-                        <div>
-                          <p className="text-sm font-medium text-[var(--text1)]">Save metadata</p>
-                          <p className="text-xs text-[var(--text3)]">Store prompts and parameters with images</p>
-                        </div>
-                        <button className="w-9 h-5 rounded-full bg-[var(--accent)] relative">
-                          <span className="absolute top-0.5 left-[18px] w-4 h-4 rounded-full bg-white shadow-sm" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-3 pt-2">
-                      <button className="px-4 py-2.5 rounded-lg text-sm font-medium bg-[var(--surface1)] text-[var(--text2)] border border-[var(--border)] hover:border-[var(--border-visible)] transition-colors">
-                        Export Gallery
-                      </button>
-                      <button className="px-4 py-2.5 rounded-lg text-sm font-medium bg-[var(--surface1)] text-[var(--text2)] border border-[var(--border)] hover:border-[var(--border-visible)] transition-colors">
-                        Import Gallery
-                      </button>
-                      <button className="px-4 py-2.5 rounded-lg text-sm font-medium bg-[var(--error)]/10 text-[var(--error)] border border-[var(--error)]/20 hover:bg-[var(--error)]/20 transition-colors">
-                        Clear All Data
-                      </button>
+                  {/* Output directory */}
+                  <div>
+                    <FieldLabel>Output Directory</FieldLabel>
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <span className="flex-1 px-3 py-2.5 rounded-md bg-paper-3 border border-rule text-sm font-mono text-muted truncate">
+                        {outputDir}
+                      </span>
+                      <motion.button
+                        whileTap={{ scale: 0.98 }}
+                        className="px-4 py-2.5 rounded-lg text-sm font-medium bg-paper-3 border border-rule text-muted shrink-0"
+                        style={borderTransition}
+                      >
+                        Change
+                      </motion.button>
                     </div>
                   </div>
-                </section>
-              </>
-            )}
+                </motion.div>
+              )}
 
-            {/* Advanced */}
-            {activeTab === "advanced" && (
-              <>
-                <section>
-                  <h2 className="font-[family-name:var(--font-manrope)] text-lg font-semibold text-[var(--text1)] mb-1">
-                    Advanced
+              {/* ============================================== */}
+              {/*  ADVANCED TAB                                    */}
+              {/* ============================================== */}
+              {activeTab === "advanced" && (
+                <motion.div
+                  key="advanced"
+                  variants={fadeVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={fadeTransition}
+                  className="space-y-8"
+                >
+                  <h2 className="font-display text-sm font-semibold text-ink-2 mb-4">
+                    Storage &amp; Data
                   </h2>
-                  <p className="text-sm text-[var(--text3)] mb-6">
-                    Fine-tune application behavior.
-                  </p>
 
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-[var(--text1)]">Custom Headers</label>
-                      <textarea
-                        placeholder={`{"X-Custom-Header": "value"}`}
-                        className="w-full h-24 p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)] text-sm text-[var(--text1)] placeholder:text-[var(--text4)] font-mono resize-none focus:outline-none focus:border-[var(--accent)]"
+                  {/* Storage usage */}
+                  <div>
+                    <div className="flex items-baseline justify-between mb-2">
+                      <span className="text-sm font-medium text-ink">
+                        Storage used
+                      </span>
+                      <span className="text-xs font-mono text-neutral">
+                        1.2 / 5.0 GB
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-paper-3 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-accent"
+                        style={{ width: "24%" }}
                       />
                     </div>
+                  </div>
 
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)]">
-                      <div>
-                        <p className="text-sm font-medium text-[var(--text1)]">NSFW Content Filter</p>
-                        <p className="text-xs text-[var(--text3)]">Block potentially unsafe content</p>
-                      </div>
-                      <button className="w-9 h-5 rounded-full bg-[var(--accent)] relative">
-                        <span className="absolute top-0.5 left-[18px] w-4 h-4 rounded-full bg-white shadow-sm" />
-                      </button>
+                  {/* Clear cache */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-ink">
+                        Cached data
+                      </p>
+                      <p className="text-xs text-neutral mt-0.5">
+                        Thumbnails and temporary files
+                      </p>
                     </div>
+                    <motion.button
+                      whileTap={{ scale: 0.98 }}
+                      className="px-4 py-2.5 rounded-lg text-sm font-medium bg-paper-3 border border-rule text-muted"
+                      style={borderTransition}
+                    >
+                      Clear cache
+                    </motion.button>
+                  </div>
 
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)]">
-                      <div>
-                        <p className="text-sm font-medium text-[var(--text1)]">Enable Debug Mode</p>
-                        <p className="text-xs text-[var(--text3)]">Show detailed API logs</p>
-                      </div>
-                      <button className="w-9 h-5 rounded-full bg-[var(--surface3)] relative">
-                        <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm" />
-                      </button>
-                    </div>
+                  {/* History retention */}
+                  <div>
+                    <FieldLabel htmlFor="history-retention">
+                      History Retention
+                    </FieldLabel>
+                    <select
+                      id="history-retention"
+                      value={historyRetention}
+                      onChange={(e) => setHistoryRetention(e.target.value)}
+                      className={inputClass}
+                      style={borderTransition}
+                    >
+                      <option value="7">7 days</option>
+                      <option value="30">30 days</option>
+                      <option value="90">90 days</option>
+                      <option value="365">1 year</option>
+                      <option value="forever">Forever</option>
+                    </select>
+                    <HelperText>
+                      How long to keep generation history before automatic
+                      cleanup.
+                    </HelperText>
+                  </div>
 
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--surface1)] border border-[var(--border)]">
+                  {/* ---- Danger zone ---- */}
+                  <div className="pt-6">
+                    <h3 className="text-xs font-semibold tracking-widest uppercase text-error mb-4">
+                      Danger Zone
+                    </h3>
+
+                    <div className="flex items-center justify-between p-4 rounded-lg border border-rule">
                       <div>
-                        <p className="text-sm font-medium text-[var(--text1)]">Rate Limit Warnings</p>
-                        <p className="text-xs text-[var(--text3)]">Notify when approaching limits</p>
+                        <p className="text-sm font-medium text-ink">
+                          Reset all settings
+                        </p>
+                        <p className="text-xs text-neutral mt-0.5">
+                          Restores every option to its factory default. This
+                          cannot be undone.
+                        </p>
                       </div>
-                      <button className="w-9 h-5 rounded-full bg-[var(--accent)] relative">
-                        <span className="absolute top-0.5 left-[18px] w-4 h-4 rounded-full bg-white shadow-sm" />
-                      </button>
+                      <motion.button
+                        whileTap={{ scale: 0.98 }}
+                        className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-error text-accent-ink shrink-0"
+                        style={{
+                          transitionProperty: "background-color",
+                          transitionDuration: "var(--dur-short)",
+                          transitionTimingFunction: "var(--ease-out)",
+                        }}
+                      >
+                        Reset
+                      </motion.button>
                     </div>
                   </div>
-                </section>
-              </>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </main>

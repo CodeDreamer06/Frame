@@ -1,122 +1,109 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R5 V5
+ * genre: editorial · theme: custom (warm-ochre editorial dark)
+ * design-system: design.md · designed-as-app
+ */
+
 @import "tailwindcss";
 
 @theme inline {
-  --color-bg: var(--bg);
-  --color-surface1: var(--surface1);
-  --color-surface2: var(--surface2);
-  --color-surface3: var(--surface3);
-  --color-border: var(--border);
-  --color-border-visible: var(--border-visible);
-  --color-text1: var(--text1);
-  --color-text2: var(--text2);
-  --color-text3: var(--text3);
-  --color-text4: var(--text4);
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-subtle: var(--accent-subtle);
-  --color-teal: var(--teal);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-error: var(--error);
+  /* ─── Colors ─── */
+  --color-paper:         oklch(13% 0.01 65);
+  --color-paper-2:       oklch(17% 0.012 65);
+  --color-paper-3:       oklch(21% 0.012 65);
+  --color-rule:          oklch(28% 0.01 65);
+  --color-rule-2:        oklch(35% 0.01 65);
+  --color-neutral:       oklch(55% 0.008 65);
+  --color-muted:         oklch(68% 0.006 65);
+  --color-ink-2:         oklch(82% 0.006 70);
+  --color-ink:           oklch(93% 0.006 75);
+  --color-accent:        oklch(72% 0.17 70);
+  --color-accent-ink:    oklch(18% 0.04 70);
+  --color-accent-hover:  oklch(78% 0.17 70);
+  --color-accent-subtle: oklch(20% 0.04 70);
+  --color-focus:         oklch(72% 0.17 70);
+  --color-success:       oklch(72% 0.16 145);
+  --color-warning:       oklch(78% 0.16 85);
+  --color-error:         oklch(62% 0.22 25);
 
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-mono), ui-monospace, monospace;
+  /* ─── Fonts ─── */
+  --font-sans:    var(--font-ibm-plex-sans), system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-mono:    var(--font-jetbrains-mono), ui-monospace, monospace;
 
-  --radius-element: 4px;
-  --radius-control: 8px;
-  --radius-component: 12px;
-  --radius-container: 20px;
-  --radius-pill: 999px;
+  /* ─── Radii ─── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   20px;
+  --radius-pill: 9999px;
 }
 
-[data-theme="dark"] {
-  --bg: #0A1019;
-  --surface1: #121A23;
-  --surface2: #1B242E;
-  --surface3: #29333D;
-  --border: #1B242E;
-  --border-visible: #29333D;
-  --text1: #F2F5F8;
-  --text2: #C3CCD8;
-  --text3: #8E9AA9;
-  --text4: #61707F;
-  --accent: #4680F5;
-  --accent-hover: #6D9DFF;
-  --accent-subtle: #07162F;
-  --teal: #2FA7A3;
-  --success: #5CB13E;
-  --warning: #E5A73B;
-  --error: #E5484D;
+/* ─── Easings & Durations (non-Tailwind tokens) ─── */
+:root {
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro:   120ms;
+  --dur-short:   220ms;
+  --dur-long:    420ms;
+
+  --z-base:     1;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
 }
 
-[data-theme="light"] {
-  --bg: #F2F5F8;
-  --surface1: #E0E6EE;
-  --surface2: #C3CCD8;
-  --surface3: #8E9AA9;
-  --border: #C3CCD8;
-  --border-visible: #8E9AA9;
-  --text1: #0A1019;
-  --text2: #3F4C59;
-  --text3: #61707F;
-  --text4: #8E9AA9;
-  --accent: #2E66DE;
-  --accent-hover: #1F4BB0;
-  --accent-subtle: #E8F4FF;
-  --teal: #2FA7A3;
-  --success: #5CB13E;
-  --warning: #E5A73B;
-  --error: #E5484D;
+/* ─── Base ─── */
+html {
+  overflow-x: clip;
+  scroll-behavior: smooth;
 }
 
 body {
+  overflow-x: clip;
   font-family: var(--font-sans);
-  background: var(--bg);
-  color: var(--text1);
+  background: var(--color-paper);
+  color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ─── Selection ─── */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+/* ─── Focus ─── */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: inherit;
 }
 
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--surface3);
+  background: var(--color-rule-2);
   border-radius: 3px;
 }
+::-webkit-scrollbar-thumb:hover { background: var(--color-neutral); }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text4);
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 150ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 150ms !important;
+  }
 }
 
-/* Selection */
-::selection {
-  background: var(--accent);
-  color: white;
-}
-
-/* Focus visible */
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Smooth scrolling */
-html {
-  scroll-behavior: smooth;
-}
-
-/* Phosphor icons base */
-.ph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* ─── Shared keyframes ─── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
