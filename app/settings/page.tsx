@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "../components/Sidebar";
 
@@ -21,13 +21,13 @@ const tabs: { id: TabId; label: string }[] = [
 ];
 
 const providers: { id: Provider; name: string; description: string }[] = [
-  { id: "openai", name: "OpenAI", description: "DALL·E 3, GPT-Image" },
+  { id: "openai", name: "OpenAI", description: "GPT-Image 2, DALL·E 3" },
   { id: "stability", name: "Stability AI", description: "Stable Diffusion XL, SD3" },
   { id: "replicate", name: "Replicate", description: "Community models, Flux" },
 ];
 
 const models: Record<Provider, string[]> = {
-  openai: ["gpt-image-1", "dall-e-3", "dall-e-2"],
+  openai: ["gpt-image-2", "gpt-image-1", "dall-e-3", "dall-e-2"],
   stability: ["stable-diffusion-xl", "sd3-medium", "sd3-large"],
   replicate: ["flux-1.1-pro", "flux-schnell", "sdxl"],
 };
@@ -164,10 +164,13 @@ export default function Settings() {
   const [provider, setProvider] = useState<Provider>("openai");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(models.openai[0]);
+  const [selectedModel, setSelectedModel] = useState("gpt-image-2");
   const [connectionStatus, setConnectionStatus] =
     useState<ConnectionStatus>("untested");
   const [isTesting, setIsTesting] = useState(false);
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [isCustomModel, setIsCustomModel] = useState(false);
+  const [customModelName, setCustomModelName] = useState("");
 
   /* --- Output tab state --- */
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("PNG");
@@ -178,6 +181,56 @@ export default function Settings() {
 
   /* --- Advanced tab state --- */
   const [historyRetention, setHistoryRetention] = useState("30");
+
+  const saveSettings = (updated: Record<string, any>) => {
+    if (typeof window === "undefined") return;
+    try {
+      const current = JSON.parse(localStorage.getItem("frame_settings") || "{}");
+      const next = { ...current, ...updated };
+      localStorage.setItem("frame_settings", JSON.stringify(next));
+    } catch (e) {
+      console.error("Failed to save settings", e);
+    }
+  };
+
+  /* --- Load settings on mount --- */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem("frame_settings");
+      if (stored) {
+        const settings = JSON.parse(stored);
+        if (settings.provider) setProvider(settings.provider);
+        if (settings.apiKey) setApiKey(settings.apiKey);
+        if (settings.apiBaseUrl !== undefined) setApiBaseUrl(settings.apiBaseUrl);
+        if (settings.selectedModel) setSelectedModel(settings.selectedModel);
+        if (settings.isCustomModel !== undefined) setIsCustomModel(settings.isCustomModel);
+        if (settings.customModelName !== undefined) setCustomModelName(settings.customModelName);
+        if (settings.outputFormat) setOutputFormat(settings.outputFormat);
+        if (settings.quality !== undefined) setQuality(settings.quality);
+        if (settings.sizePreset) setSizePreset(settings.sizePreset);
+        if (settings.autoSave !== undefined) setAutoSave(settings.autoSave);
+        if (settings.historyRetention) setHistoryRetention(settings.historyRetention);
+      } else {
+        const initial = {
+          provider: "openai",
+          apiKey: "",
+          apiBaseUrl: "",
+          selectedModel: "gpt-image-2",
+          isCustomModel: false,
+          customModelName: "",
+          outputFormat: "PNG",
+          quality: 80,
+          sizePreset: "1024×1024",
+          autoSave: true,
+          historyRetention: "30"
+        };
+        localStorage.setItem("frame_settings", JSON.stringify(initial));
+      }
+    } catch (e) {
+      console.error("Failed to load settings", e);
+    }
+  }, []);
 
   /* --- Handlers --- */
   const handleTestConnection = async () => {
@@ -190,8 +243,110 @@ export default function Settings() {
 
   const handleProviderChange = (p: Provider) => {
     setProvider(p);
-    setSelectedModel(models[p][0]);
+    const defaultModel = models[p][0];
+    setSelectedModel(defaultModel);
+    setIsCustomModel(false);
     setConnectionStatus("untested");
+    saveSettings({
+      provider: p,
+      selectedModel: defaultModel,
+      isCustomModel: false
+    });
+  };
+
+  const handleApiKeyChange = (val: string) => {
+    setApiKey(val);
+    setConnectionStatus("untested");
+    saveSettings({ apiKey: val });
+  };
+
+  const handleApiBaseUrlChange = (val: string) => {
+    setApiBaseUrl(val);
+    saveSettings({ apiBaseUrl: val });
+  };
+
+  const handleModelChange = (val: string) => {
+    if (val === "custom") {
+      setIsCustomModel(true);
+      const name = customModelName || "custom-model";
+      setSelectedModel(name);
+      saveSettings({ isCustomModel: true, selectedModel: name });
+    } else {
+      setIsCustomModel(false);
+      setSelectedModel(val);
+      saveSettings({ isCustomModel: false, selectedModel: val });
+    }
+  };
+
+  const handleCustomModelNameChange = (val: string) => {
+    setCustomModelName(val);
+    setSelectedModel(val);
+    saveSettings({ customModelName: val, selectedModel: val });
+  };
+
+  const handleOutputFormatChange = (val: OutputFormat) => {
+    setOutputFormat(val);
+    saveSettings({ outputFormat: val });
+  };
+
+  const handleQualityChange = (val: number) => {
+    setQuality(val);
+    saveSettings({ quality: val });
+  };
+
+  const handleSizePresetChange = (val: SizePreset) => {
+    setSizePreset(val);
+    saveSettings({ sizePreset: val });
+  };
+
+  const handleAutoSaveChange = (val: boolean) => {
+    setAutoSave(val);
+    saveSettings({ autoSave: val });
+  };
+
+  const handleHistoryRetentionChange = (val: string) => {
+    setHistoryRetention(val);
+    saveSettings({ historyRetention: val });
+  };
+
+  const handleResetSettings = () => {
+    const initial = {
+      provider: "openai",
+      apiKey: "",
+      apiBaseUrl: "",
+      selectedModel: "gpt-image-2",
+      isCustomModel: false,
+      customModelName: "",
+      outputFormat: "PNG",
+      quality: 80,
+      sizePreset: "1024×1024",
+      autoSave: true,
+      historyRetention: "30"
+    };
+    if (typeof window !== "undefined") {
+      localStorage.setItem("frame_settings", JSON.stringify(initial));
+    }
+    setProvider("openai");
+    setApiKey("");
+    setApiBaseUrl("");
+    setSelectedModel("gpt-image-2");
+    setIsCustomModel(false);
+    setCustomModelName("");
+    setOutputFormat("PNG");
+    setQuality(80);
+    setSizePreset("1024×1024");
+    setAutoSave(true);
+    setHistoryRetention("30");
+    setConnectionStatus("untested");
+  };
+
+  const getProviderDefaultBaseUrl = (prov: string) => {
+    switch (prov) {
+      case "openai": return "https://api.openai.com/v1";
+      case "stability": return "https://api.stability.ai/v2beta";
+      case "replicate": return "https://api.replicate.com/v1";
+      default: return "";
+    }
   };
 
   /* --- Reusable label --- */
@@ -325,10 +480,7 @@ export default function Settings() {
                         id="api-key"
                         type={showKey ? "text" : "password"}
                         value={apiKey}
-                        onChange={(e) => {
-                          setApiKey(e.target.value);
-                          setConnectionStatus("untested");
-                        }}
+                        onChange={(e) => handleApiKeyChange(e.target.value)}
                         placeholder="sk-..."
                         className={`${inputClass} pr-10`}
                         style={borderTransition}
@@ -377,13 +529,30 @@ export default function Settings() {
                     </HelperText>
                   </div>
 
+                  {/* API Base URL */}
+                  <div>
+                    <FieldLabel htmlFor="api-base-url">API Base URL</FieldLabel>
+                    <input
+                      id="api-base-url"
+                      type="text"
+                      value={apiBaseUrl}
+                      onChange={(e) => handleApiBaseUrlChange(e.target.value)}
+                      placeholder={getProviderDefaultBaseUrl(provider)}
+                      className={inputClass}
+                      style={borderTransition}
+                    />
+                    <HelperText>
+                      Override the default API endpoint. Leave empty to use the provider's default URL.
+                    </HelperText>
+                  </div>
+
                   {/* Model selector */}
                   <div>
                     <FieldLabel htmlFor="model-select">Model</FieldLabel>
                     <select
                       id="model-select"
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
+                      value={isCustomModel ? "custom" : selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
                       className={inputClass}
                       style={borderTransition}
                     >
@@ -392,8 +561,33 @@ export default function Settings() {
                           {m}
                         </option>
                       ))}
+                      <option value="custom">Custom Model...</option>
                     </select>
                   </div>
+
+                  {/* Custom Model Name Input */}
+                  <AnimatePresence>
+                    {isCustomModel && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={fadeTransition}
+                        className="overflow-hidden"
+                      >
+                        <FieldLabel htmlFor="custom-model-name">Custom Model Name</FieldLabel>
+                        <input
+                          id="custom-model-name"
+                          type="text"
+                          value={customModelName}
+                          onChange={(e) => handleCustomModelNameChange(e.target.value)}
+                          placeholder="e.g. gpt-4o-custom"
+                          className={inputClass}
+                          style={borderTransition}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   {/* Test connection + status */}
                   <div className="flex items-center gap-4">
@@ -440,7 +634,7 @@ export default function Settings() {
                           <motion.button
                             key={fmt}
                             whileTap={{ scale: 0.98 }}
-                            onClick={() => setOutputFormat(fmt)}
+                            onClick={() => handleOutputFormatChange(fmt)}
                             className={`px-4 py-2.5 rounded-lg text-sm font-medium ${
                               isSelected
                                 ? "bg-accent text-accent-ink"
@@ -469,7 +663,7 @@ export default function Settings() {
                       max={100}
                       step={5}
                       value={quality}
-                      onChange={(e) => setQuality(Number(e.target.value))}
+                      onChange={(e) => handleQualityChange(Number(e.target.value))}
                       className="w-full accent-[var(--color-accent)] h-1.5 rounded-full bg-paper-3"
                     />
                     <HelperText>
@@ -486,7 +680,7 @@ export default function Settings() {
                         return (
                           <button
                             key={size}
-                            onClick={() => setSizePreset(size)}
+                            onClick={() => handleSizePresetChange(size)}
                             className={`px-3 py-2.5 rounded-md text-xs font-mono font-medium ${
                               isSelected
                                 ? "border-accent bg-accent-subtle text-ink border"
@@ -511,7 +705,7 @@ export default function Settings() {
                         Save all generated images to the output directory
                       </p>
                     </div>
-                    <Toggle checked={autoSave} onChange={setAutoSave} />
+                    <Toggle checked={autoSave} onChange={handleAutoSaveChange} />
                   </div>
 
                   {/* Output directory */}
@@ -595,7 +789,7 @@ export default function Settings() {
                     <select
                       id="history-retention"
                       value={historyRetention}
-                      onChange={(e) => setHistoryRetention(e.target.value)}
+                      onChange={(e) => handleHistoryRetentionChange(e.target.value)}
                       className={inputClass}
                       style={borderTransition}
                     >
@@ -629,6 +823,7 @@ export default function Settings() {
                       </div>
                       <motion.button
                         whileTap={{ scale: 0.98 }}
+                        onClick={handleResetSettings}
                         className="px-4 py-2.5 rounded-lg text-sm font-semibold bg-error text-accent-ink shrink-0"
                         style={{
                           transitionProperty: "background-color",

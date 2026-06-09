@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "./components/Sidebar";
 
-const sizePresets = [
+const defaultSizePresets = [
   { label: "Square", value: "1024x1024", ratio: "1:1" },
   { label: "Portrait", value: "1024x1792", ratio: "9:16" },
   { label: "Landscape", value: "1792x1024", ratio: "16:9" },
@@ -12,7 +12,7 @@ const sizePresets = [
   { label: "Custom", value: "custom", ratio: "?" },
 ];
 
-const qualityOptions = [
+const defaultQualityOptions = [
   { label: "Standard", value: "standard", desc: "Fast, good quality" },
   { label: "HD", value: "hd", desc: "Balanced" },
   { label: "Ultra", value: "ultra", desc: "Best quality, slower" },
@@ -110,6 +110,141 @@ export default function Studio() {
   const [showNegative, setShowNegative] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const [provider, setProvider] = useState("openai");
+  const [selectedModel, setSelectedModel] = useState("gpt-image-2");
+  const [customWidth, setCustomWidth] = useState("1024");
+  const [customHeight, setCustomHeight] = useState("1024");
+  const [gptImage2Background, setGptImage2Background] = useState("auto");
+  const [referenceImages, setReferenceImages] = useState<{ url: string; file?: File }[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem("frame_settings");
+      if (stored) {
+        const settings = JSON.parse(stored);
+        if (settings.provider) setProvider(settings.provider);
+        if (settings.selectedModel) {
+          setSelectedModel(settings.selectedModel);
+          if (settings.selectedModel === "gpt-image-2") {
+            setSelectedQuality("auto");
+            setSelectedSize("1024x1024");
+          } else {
+            if (settings.sizePreset) {
+              const normalizedSize = settings.sizePreset.replace("×", "x");
+              setSelectedSize(normalizedSize);
+            }
+          }
+        }
+      }
+      setSettingsLoaded(true);
+    } catch (e) {
+      console.error("Failed to load settings in Studio", e);
+      setSettingsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      referenceImages.forEach((img) => {
+        if (img.url.startsWith("blob:")) {
+          URL.revokeObjectURL(img.url);
+        }
+      });
+    };
+  }, []);
+
+  const isGptImage2 = selectedModel === "gpt-image-2";
+
+  const sizePresets = isGptImage2
+    ? [
+        { label: "Square", value: "1024x1024", ratio: "1:1" },
+        { label: "Portrait", value: "1024x1792", ratio: "9:16" },
+        { label: "Landscape", value: "1792x1024", ratio: "16:9" },
+        { label: "4K Square", value: "2048x2048", ratio: "1:1" },
+        { label: "4K Landscape", value: "3840x2160", ratio: "16:9" },
+        { label: "4K Portrait", value: "2160x3840", ratio: "9:16" },
+        { label: "Custom", value: "custom", ratio: "?" },
+      ]
+    : defaultSizePresets;
+
+  const qualityOptions = isGptImage2
+    ? [
+        { label: "Auto", value: "auto", desc: "Automatic quality" },
+        { label: "Standard", value: "standard", desc: "Standard details" },
+        { label: "High", value: "high", desc: "Maximum fidelity" },
+      ]
+    : defaultQualityOptions;
+
+  const supportsImageInput =
+    selectedModel.toLowerCase().includes("gpt-image-2") ||
+    selectedModel.toLowerCase().includes("gpt-image-1") ||
+    selectedModel.toLowerCase().includes("flux-1.1-pro") ||
+    selectedModel.toLowerCase().includes("flux-schnell") ||
+    selectedModel.toLowerCase().includes("stable-diffusion-xl") ||
+    selectedModel.toLowerCase().includes("sdxl") ||
+    selectedModel.toLowerCase().includes("sd3");
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (supportsImageInput) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (!supportsImageInput) return;
+    const files = Array.from(e.dataTransfer.files);
+    addFiles(files);
+  };
+
+  const addFiles = (files: File[]) => {
+    const imgFiles = files.filter((f) => f.type.startsWith("image/"));
+    const newRefs = imgFiles.map((file) => ({
+      file,
+      url: URL.createObjectURL(file),
+    }));
+    setReferenceImages((prev) => [...prev, ...newRefs]);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      addFiles(Array.from(e.target.files));
+    }
+  };
+
+  const handleRemoveReferenceImage = (idx: number) => {
+    setReferenceImages((prev) => {
+      const copy = [...prev];
+      if (copy[idx].url.startsWith("blob:")) {
+        URL.revokeObjectURL(copy[idx].url);
+      }
+      copy.splice(idx, 1);
+      return copy;
+    });
+  };
+
+  useEffect(() => {
+    if (isGptImage2) {
+      if (!["auto", "standard", "high"].includes(selectedQuality)) {
+        setSelectedQuality("auto");
+      }
+    } else {
+      if (!["standard", "hd", "ultra"].includes(selectedQuality)) {
+        setSelectedQuality("hd");
+      }
+    }
+  }, [selectedModel]);
+
   const [generatedImages, setGeneratedImages] = useState<
     { id: number; url: string; prompt: string }[]
   >([]);
@@ -145,9 +280,14 @@ export default function Studio() {
       <main className="flex-1 flex flex-col min-w-0 bg-paper">
         {/* Header */}
         <header className="h-14 border-b border-rule flex items-center justify-between px-6 shrink-0">
-          <h1 className="font-display text-base font-semibold text-ink">
-            Studio
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="font-display text-base font-semibold text-ink">
+              Studio
+            </h1>
+            <span className="text-[10px] font-mono text-neutral bg-paper-2 border border-rule px-2 py-0.5 rounded-md uppercase tracking-wider">
+              {provider} / {selectedModel}
+            </span>
+          </div>
           <div className="flex items-center gap-4">
             <button className="text-xs font-medium text-neutral hover:text-ink transition-colors" style={{ transitionProperty: "color", transitionDuration: "var(--dur-short)", transitionTimingFunction: "var(--ease-out)" }}>
               History
@@ -168,19 +308,133 @@ export default function Studio() {
                 <label className="block mb-2 font-display text-sm font-medium tracking-wide text-ink-2">
                   Describe your vision
                 </label>
-                <textarea
-                  ref={textareaRef}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="A watercolor painting of coastal cliffs at golden hour\u2026"
-                  rows={4}
-                  className="w-full p-4 rounded-lg bg-paper-3 border border-rule text-sm text-ink leading-relaxed placeholder:text-neutral resize-none outline-none transition-colors focus-visible:border-accent"
+                
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`relative rounded-lg bg-paper-3 border transition-colors ${
+                    isDragging ? "border-accent bg-accent-subtle/5" : "border-rule"
+                  } focus-within:border-accent overflow-hidden`}
                   style={{
-                    transitionProperty: "border-color",
+                    transitionProperty: "border-color, background-color",
                     transitionDuration: "var(--dur-short)",
                     transitionTimingFunction: "var(--ease-out)",
                   }}
-                />
+                >
+                  <textarea
+                    ref={textareaRef}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder={
+                      supportsImageInput
+                        ? "Describe your vision, or drop reference images here..."
+                        : "Describe your vision..."
+                    }
+                    className="w-full p-4 bg-transparent text-sm text-ink leading-relaxed placeholder:text-neutral resize-none outline-none"
+                    style={{
+                      minHeight: "120px",
+                    }}
+                  />
+
+                  {/* Previews if model supports image input */}
+                  {supportsImageInput && referenceImages.length > 0 && (
+                    <div className="flex flex-wrap gap-2 px-4 pb-3">
+                      {referenceImages.map((img, idx) => (
+                        <div
+                          key={idx}
+                          className="relative group w-14 h-14 rounded-md overflow-hidden border border-rule"
+                        >
+                          <img
+                            src={img.url}
+                            alt={`Reference ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveReferenceImage(idx)}
+                            className="absolute top-1 right-1 p-0.5 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80 transition-opacity"
+                            style={{
+                              transitionProperty: "opacity, background-color",
+                              transitionDuration: "var(--dur-micro)",
+                              transitionTimingFunction: "var(--ease-out)",
+                            }}
+                            aria-label="Remove reference image"
+                          >
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+
+                      {/* Small click to upload box */}
+                      <label
+                        className="flex items-center justify-center w-14 h-14 rounded-md border border-dashed border-rule-2 hover:border-accent hover:bg-paper-2 cursor-pointer transition-colors text-neutral hover:text-accent"
+                        style={{
+                          transitionProperty: "border-color, background-color, color",
+                          transitionDuration: "var(--dur-short)",
+                          transitionTimingFunction: "var(--ease-out)",
+                        }}
+                      >
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleFileSelect}
+                        />
+                        <svg
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Drag overlay message */}
+                  {isDragging && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-accent-subtle/20 backdrop-blur-xs pointer-events-none">
+                      <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="text-accent mb-1 animate-bounce"
+                      >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span className="text-xs font-semibold text-accent uppercase tracking-wider">
+                        Drop images here
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Negative prompt toggle */}
                 <button
@@ -268,6 +522,59 @@ export default function Studio() {
                       </button>
                     ))}
                   </div>
+
+                  {/* Conditional manual inputs for Custom size */}
+                  <AnimatePresence>
+                    {selectedSize === "custom" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{
+                          duration: 0.3,
+                          ease: [0.16, 1, 0.3, 1] as const,
+                        }}
+                        className="overflow-hidden mt-3 grid grid-cols-2 gap-3"
+                      >
+                        <div>
+                          <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral mb-1">
+                            Width (px)
+                          </label>
+                          <input
+                            type="number"
+                            value={customWidth}
+                            onChange={(e) => setCustomWidth(e.target.value)}
+                            min={256}
+                            max={4096}
+                            className="w-full px-3 py-2 bg-paper-3 border border-rule rounded-md text-sm text-ink outline-none focus-visible:border-accent"
+                            style={{
+                              transitionProperty: "border-color",
+                              transitionDuration: "var(--dur-short)",
+                              transitionTimingFunction: "var(--ease-out)",
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-semibold uppercase tracking-wider text-neutral mb-1">
+                            Height (px)
+                          </label>
+                          <input
+                            type="number"
+                            value={customHeight}
+                            onChange={(e) => setCustomHeight(e.target.value)}
+                            min={256}
+                            max={4096}
+                            className="w-full px-3 py-2 bg-paper-3 border border-rule rounded-md text-sm text-ink outline-none focus-visible:border-accent"
+                            style={{
+                              transitionProperty: "border-color",
+                              transitionDuration: "var(--dur-short)",
+                              transitionTimingFunction: "var(--ease-out)",
+                            }}
+                          />
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </Section>
 
                 {/* Quality */}
@@ -323,6 +630,38 @@ export default function Studio() {
                   </div>
                 </Section>
 
+                {/* Background (GPT-image-2 only) */}
+                {isGptImage2 && (
+                  <Section label="Background">
+                    <div className="space-y-1.5">
+                      <div className="grid grid-cols-2 gap-2">
+                        {["auto", "opaque"].map((bg) => (
+                          <button
+                            key={bg}
+                            onClick={() => setGptImage2Background(bg)}
+                            className={`px-3 py-2.5 rounded-md text-xs font-medium transition-colors border capitalize ${
+                              gptImage2Background === bg
+                                ? "border-accent bg-accent-subtle text-accent"
+                                : "border-rule bg-paper-3 text-muted hover:text-ink-2 hover:border-rule-2"
+                            }`}
+                            style={{
+                              transitionProperty:
+                                "border-color, background-color, color",
+                              transitionDuration: "var(--dur-short)",
+                              transitionTimingFunction: "var(--ease-out)",
+                            }}
+                          >
+                            {bg}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-neutral mt-1.5">
+                        GPT-image-2 does not support transparent outputs.
+                      </p>
+                    </div>
+                  </Section>
+                )}
+
                 {/* Output */}
                 <Section label="Output" defaultOpen={false}>
                   <div className="grid grid-cols-2 gap-3">
@@ -374,7 +713,7 @@ export default function Studio() {
                     <input
                       type="range"
                       min="1"
-                      max="8"
+                      max={isGptImage2 ? "10" : "8"}
                       value={batchCount}
                       onChange={(e) =>
                         setBatchCount(Number(e.target.value))
