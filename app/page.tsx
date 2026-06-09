@@ -118,6 +118,9 @@ export default function Studio() {
   const [referenceImages, setReferenceImages] = useState<{ url: string; file?: File }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState<string>("");
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -173,7 +176,8 @@ export default function Studio() {
   const qualityOptions = isGptImage2
     ? [
         { label: "Auto", value: "auto", desc: "Automatic quality" },
-        { label: "Standard", value: "standard", desc: "Standard details" },
+        { label: "Low", value: "low", desc: "Fast, lower quality" },
+        { label: "Medium", value: "medium", desc: "Balanced details" },
         { label: "High", value: "high", desc: "Maximum fidelity" },
       ]
     : defaultQualityOptions;
@@ -235,7 +239,7 @@ export default function Studio() {
 
   useEffect(() => {
     if (isGptImage2) {
-      if (!["auto", "standard", "high"].includes(selectedQuality)) {
+      if (!["auto", "low", "medium", "high"].includes(selectedQuality)) {
         setSelectedQuality("auto");
       }
     } else {
@@ -350,6 +354,12 @@ export default function Studio() {
         e.preventDefault();
         batchSliderRef.current?.focus();
       }
+
+      // 8. Close error modal (Escape)
+      if (e.key === "Escape" && showErrorModal) {
+        e.preventDefault();
+        setShowErrorModal(false);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -366,7 +376,8 @@ export default function Studio() {
     isDragging,
     referenceImages,
     provider,
-    selectedModel
+    selectedModel,
+    showErrorModal
   ]);
 
   const convertFileToBase64 = (file: File): Promise<string> => {
@@ -397,6 +408,7 @@ export default function Studio() {
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
     setIsGenerating(true);
+    setGenerationStatus("Starting...");
 
     // Load latest settings from local storage
     let currentSettings = {
@@ -418,6 +430,7 @@ export default function Studio() {
 
     // Check if API Key is configured. If not, use mock generation.
     if (!apiKey) {
+      setGenerationStatus("Connecting (Mock)...");
       setTimeout(() => {
         const newImages = Array.from({ length: batchCount }, (_, i) => {
           const id = Date.now() + i;
@@ -437,58 +450,174 @@ export default function Studio() {
         setGeneratedImages((prev) => [...newImages, ...prev]);
         saveGenerationsToLocalStorage(newImages);
         setIsGenerating(false);
+        setGenerationStatus("");
       }, 1500);
       return;
     }
 
-    // Real API call based on provider
-    try {
-      if (settingsProvider === "openai") {
-        const baseUrl = apiBaseUrl || "https://api.openai.com/v1";
-        const endpoint = `${baseUrl}/images/generations`;
-
-        const sizeParam = selectedSize === "custom" ? `${customWidth}x${customHeight}` : selectedSize;
-        const body: Record<string, any> = {
-          model: settingsModel,
-          prompt: prompt,
-          n: batchCount,
-          size: sizeParam,
-        };
-
-        const isGptImage = settingsModel.toLowerCase().includes("gpt-image");
-
-        if (isGptImage) {
-          body.quality = selectedQuality; // 'auto', 'standard', 'high'
-          body.background = gptImage2Background; // 'auto', 'opaque'
+    // Define the call with retry up to 5 times
+    const maxRetries = 5;
+    const executeWithRetry = async (attempt = 1): Promise<any> => {
+      try {
+        if (attempt > 1) {
+          setGenerationStatus(`Retrying (Attempt ${attempt}/5)...`);
         } else {
-          body.response_format = "b64_json";
-          // DALL-E 3 only supports 'standard' or 'hd'
-          body.quality = selectedQuality === "high" || selectedQuality === "hd" || selectedQuality === "ultra" ? "hd" : "standard";
+          setGenerationStatus("Connecting...");
         }
 
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(body),
-        });
+        if (settingsProvider === "openai") {
+          const baseUrl = apiBaseUrl || "https://api.openai.com/v1";
+          const endpoint = `${baseUrl}/images/generations`;
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `OpenAI request failed: status ${res.status}`);
+          const sizeParam = selectedSize === "custom" ? `${customWidth}x${customHeight}` : selectedSize;
+          const body: Record<string, any> = {
+            model: settingsModel,
+            prompt: prompt,
+            n: batchCount,
+            size: sizeParam,
+          };
+
+          const isGptImage = settingsModel.toLowerCase().includes("gpt-image");
+
+          if (isGptImage) {
+            body.quality = selectedQuality; // 'auto', 'low', 'medium', 'high'
+            body.background = gptImage2Background; // 'auto', 'opaque'
+          } else {
+            body.response_format = "b64_json";
+            // DALL-E 3 only supports 'standard' or 'hd'
+            body.quality = selectedQuality === "high" || selectedQuality === "hd" || selectedQuality === "ultra" ? "hd" : "standard";
+          }
+
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error?.message || `OpenAI API returned status ${res.status}`);
+          }
+
+          return await res.json();
+        } else if (settingsProvider === "stability") {
+          const baseUrl = apiBaseUrl || "https://api.stability.ai/v2beta";
+          const endpoint = `${baseUrl}/stable-image/generate/core`;
+
+          const formData = new FormData();
+          formData.append("prompt", prompt);
+          formData.append("output_format", "webp");
+          
+          let aspect = "1:1";
+          if (selectedSize === "1024x1792" || selectedSize === "2160x3840") aspect = "9:16";
+          else if (selectedSize === "1792x1024" || selectedSize === "3840x2160" || selectedSize === "1920x1080") aspect = "16:9";
+          formData.append("aspect_ratio", aspect);
+
+          if (referenceImages.length > 0 && referenceImages[0].file) {
+            formData.append("image", referenceImages[0].file);
+            formData.append("strength", "0.7");
+          }
+
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Accept": "application/json"
+            },
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.errors?.[0] || errData.message || `Stability API returned status ${res.status}`);
+          }
+
+          return await res.json();
+        } else if (settingsProvider === "replicate") {
+          const baseUrl = apiBaseUrl || "https://api.replicate.com/v1";
+          const endpoint = `${baseUrl}/predictions`;
+
+          const body: Record<string, any> = {
+            version: settingsModel.includes("flux-1.1-pro") 
+              ? "flux-1.1-pro" 
+              : settingsModel.includes("flux-schnell")
+              ? "flux-schnell"
+              : "sdxl",
+            input: {
+              prompt: prompt,
+            }
+          };
+
+          if (referenceImages.length > 0 && referenceImages[0].file) {
+            const base64 = await convertFileToBase64(referenceImages[0].file);
+            body.input.image = base64;
+          }
+
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Token ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Replicate API returned status ${res.status}`);
+          }
+
+          const prediction = await res.json();
+          let pollUrl = prediction.urls.get || `${baseUrl}/predictions/${prediction.id}`;
+          let completedPrediction = prediction;
+          let attempts = 0;
+
+          while (completedPrediction.status !== "succeeded" && completedPrediction.status !== "failed" && attempts < 30) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            setGenerationStatus(`Polling Replicate (${attempts + 1})...`);
+            const pollRes = await fetch(pollUrl, {
+              headers: {
+                "Authorization": `Token ${apiKey}`,
+              }
+            });
+            if (pollRes.ok) {
+              completedPrediction = await pollRes.json();
+            }
+            attempts++;
+          }
+
+          if (completedPrediction.status === "succeeded") {
+            return completedPrediction;
+          } else {
+            throw new Error(completedPrediction.error || "Replicate prediction failed or timed out.");
+          }
+        } else {
+          throw new Error(`Unknown provider: ${settingsProvider}`);
         }
+      } catch (error: any) {
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          return executeWithRetry(attempt + 1);
+        } else {
+          throw error;
+        }
+      }
+    };
 
-        const data = await res.json();
-        
-        // Convert URLs or b64_json to base64 for local storage persistence
+    try {
+      const data = await executeWithRetry();
+
+      setGenerationStatus("Processing outputs...");
+
+      if (settingsProvider === "openai") {
         const newImages = await Promise.all(
           data.data.map(async (img: any, i: number) => {
             const id = Date.now() + i;
             let imgUrl = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;
 
-            // Fetch and convert raw URLs to base64 to prevent them from expiring
             if (img.url && !img.b64_json) {
               imgUrl = await convertUrlToBase64(img.url);
             }
@@ -508,38 +637,6 @@ export default function Studio() {
         setGeneratedImages((prev) => [...newImages, ...prev]);
         saveGenerationsToLocalStorage(newImages);
       } else if (settingsProvider === "stability") {
-        const baseUrl = apiBaseUrl || "https://api.stability.ai/v2beta";
-        const endpoint = `${baseUrl}/stable-image/generate/core`;
-
-        const formData = new FormData();
-        formData.append("prompt", prompt);
-        formData.append("output_format", "webp");
-        
-        let aspect = "1:1";
-        if (selectedSize === "1024x1792" || selectedSize === "2160x3840") aspect = "9:16";
-        else if (selectedSize === "1792x1024" || selectedSize === "3840x2160" || selectedSize === "1920x1080") aspect = "16:9";
-        formData.append("aspect_ratio", aspect);
-
-        if (referenceImages.length > 0 && referenceImages[0].file) {
-          formData.append("image", referenceImages[0].file);
-          formData.append("strength", "0.7");
-        }
-
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Accept": "application/json"
-          },
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.errors?.[0] || errData.message || `Stability request failed: status ${res.status}`);
-        }
-
-        const data = await res.json();
         const newImages = [{
           id: Date.now(),
           url: `data:image/webp;base64,${data.image}`,
@@ -553,88 +650,35 @@ export default function Studio() {
         setGeneratedImages((prev) => [...newImages, ...prev]);
         saveGenerationsToLocalStorage(newImages);
       } else if (settingsProvider === "replicate") {
-        const baseUrl = apiBaseUrl || "https://api.replicate.com/v1";
-        const endpoint = `${baseUrl}/predictions`;
+        const outputUrls = Array.isArray(data.output) 
+          ? data.output 
+          : [data.output];
+        
+        const newImages = await Promise.all(
+          outputUrls.map(async (url: string, i: number) => {
+            const base64Url = await convertUrlToBase64(url);
+            return {
+              id: Date.now() + i,
+              url: base64Url,
+              prompt: prompt,
+              date: new Date().toISOString().split("T")[0],
+              size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+              model: settingsModel,
+              favorite: false,
+            };
+          })
+        );
 
-        const body: Record<string, any> = {
-          version: settingsModel.includes("flux-1.1-pro") 
-            ? "flux-1.1-pro" 
-            : settingsModel.includes("flux-schnell")
-            ? "flux-schnell"
-            : "sdxl",
-          input: {
-            prompt: prompt,
-          }
-        };
-
-        if (referenceImages.length > 0 && referenceImages[0].file) {
-          const base64 = await convertFileToBase64(referenceImages[0].file);
-          body.input.image = base64;
-        }
-
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Token ${apiKey}`,
-          },
-          body: JSON.stringify(body),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.detail || `Replicate prediction failed: status ${res.status}`);
-        }
-
-        const prediction = await res.json();
-        let pollUrl = prediction.urls.get || `${baseUrl}/predictions/${prediction.id}`;
-        let completedPrediction = prediction;
-        let attempts = 0;
-
-        while (completedPrediction.status !== "succeeded" && completedPrediction.status !== "failed" && attempts < 30) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          const pollRes = await fetch(pollUrl, {
-            headers: {
-              "Authorization": `Token ${apiKey}`,
-            }
-          });
-          if (pollRes.ok) {
-            completedPrediction = await pollRes.json();
-          }
-          attempts++;
-        }
-
-        if (completedPrediction.status === "succeeded") {
-          const outputUrls = Array.isArray(completedPrediction.output) 
-            ? completedPrediction.output 
-            : [completedPrediction.output];
-          
-          const newImages = await Promise.all(
-            outputUrls.map(async (url: string, i: number) => {
-              const base64Url = await convertUrlToBase64(url);
-              return {
-                id: Date.now() + i,
-                url: base64Url,
-                prompt: prompt,
-                date: new Date().toISOString().split("T")[0],
-                size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
-                model: settingsModel,
-                favorite: false,
-              };
-            })
-          );
-
-          setGeneratedImages((prev) => [...newImages, ...prev]);
-          saveGenerationsToLocalStorage(newImages);
-        } else {
-          throw new Error(`Replicate prediction failed: ${completedPrediction.error || "unknown error"}`);
-        }
+        setGeneratedImages((prev) => [...newImages, ...prev]);
+        saveGenerationsToLocalStorage(newImages);
       }
     } catch (error: any) {
-      console.error("API Call error:", error);
-      alert(`API Error: ${error.message}`);
+      console.error("Failed to generate image after retries:", error);
+      setErrorMessage(error.message || "An unexpected error occurred during generation.");
+      setShowErrorModal(true);
     } finally {
       setIsGenerating(false);
+      setGenerationStatus("");
     }
   };
 
@@ -1133,7 +1177,7 @@ export default function Studio() {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       />
                     </svg>
-                    Generating\u2026
+                    {generationStatus || "Generating\u2026"}
                   </span>
                 ) : (
                   generateLabel
@@ -1268,6 +1312,89 @@ export default function Studio() {
           </div>
         </div>
       </main>
+
+      {/* Error Modal */}
+      <AnimatePresence>
+        {showErrorModal && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowErrorModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-xs"
+            />
+
+            {/* Container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              className="relative w-full max-w-md bg-paper-2 border border-rule rounded-xl shadow-2xl p-6 z-10"
+              role="alertdialog"
+              aria-modal="true"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-4 text-error">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <h2 className="font-display text-base font-semibold text-ink">
+                  Generation Failed
+                </h2>
+              </div>
+
+              {/* Message */}
+              <div className="p-3.5 rounded-lg border border-error/20 bg-error/5 text-xs text-muted leading-relaxed font-mono break-words mb-5 select-text">
+                {errorMessage}
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowErrorModal(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-paper-3 border border-rule text-muted hover:text-ink-2 hover:border-rule-2 transition-colors"
+                  style={{
+                    transitionProperty: "background-color, border-color, color",
+                    transitionDuration: "var(--dur-short)",
+                    transitionTimingFunction: "var(--ease-out)",
+                  }}
+                >
+                  Close
+                </button>
+                <motion.button
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setShowErrorModal(false);
+                    handleGenerate();
+                  }}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-accent text-accent-ink hover:bg-accent-hover transition-colors"
+                  style={{
+                    transitionProperty: "background-color, color",
+                    transitionDuration: "var(--dur-short)",
+                    transitionTimingFunction: "var(--ease-out)",
+                  }}
+                >
+                  Retry Generation
+                </motion.button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
