@@ -246,8 +246,41 @@ export default function Studio() {
   }, [selectedModel]);
 
   const [generatedImages, setGeneratedImages] = useState<
-    { id: number; url: string; prompt: string }[]
+    { id: number; url: string; prompt: string; date: string; size: string; model: string; favorite: boolean }[]
   >([]);
+
+  /* Load generations on mount */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem("frame_generations");
+      if (stored) {
+        setGeneratedImages(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error("Failed to load generations in Studio", e);
+    }
+  }, []);
+
+  const saveGenerationsToLocalStorage = (newImgs: any[]) => {
+    if (typeof window === "undefined") return;
+    try {
+      const existing = JSON.parse(localStorage.getItem("frame_generations") || "[]");
+      const updated = [...newImgs, ...existing];
+      localStorage.setItem("frame_generations", JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to save generations to local storage", e);
+    }
+  };
+
+  const convertFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
 
   /* Auto-resize textarea */
   useEffect(() => {
@@ -257,18 +290,231 @@ export default function Studio() {
     el.style.height = `${Math.max(120, el.scrollHeight)}px`;
   }, [prompt]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!prompt.trim()) return;
     setIsGenerating(true);
-    setTimeout(() => {
-      const newImages = Array.from({ length: batchCount }, (_, i) => ({
-        id: Date.now() + i,
-        url: `https://picsum.photos/seed/${Date.now() + i}/400/400`,
-        prompt: prompt,
-      }));
-      setGeneratedImages((prev) => [...newImages, ...prev]);
+
+    // Load latest settings from local storage
+    let currentSettings = {
+      provider: "openai",
+      apiKey: "",
+      apiBaseUrl: "",
+      selectedModel: "gpt-image-2",
+    };
+    try {
+      const stored = localStorage.getItem("frame_settings");
+      if (stored) {
+        currentSettings = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+
+    const { provider: settingsProvider, apiKey, apiBaseUrl, selectedModel: settingsModel } = currentSettings;
+
+    // Check if API Key is configured. If not, use mock generation.
+    if (!apiKey) {
+      setTimeout(() => {
+        const newImages = Array.from({ length: batchCount }, (_, i) => {
+          const id = Date.now() + i;
+          const width = selectedSize === "custom" ? Number(customWidth) || 1024 : 1024;
+          const height = selectedSize === "custom" ? Number(customHeight) || 1024 : 1024;
+          return {
+            id,
+            url: `https://picsum.photos/seed/${id}/${width}/${height}`,
+            prompt: prompt,
+            date: new Date().toISOString().split("T")[0],
+            size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+            model: settingsModel,
+            favorite: false,
+          };
+        });
+
+        setGeneratedImages((prev) => [...newImages, ...prev]);
+        saveGenerationsToLocalStorage(newImages);
+        setIsGenerating(false);
+      }, 1500);
+      return;
+    }
+
+    // Real API call based on provider
+    try {
+      if (settingsProvider === "openai") {
+        const baseUrl = apiBaseUrl || "https://api.openai.com/v1";
+        const endpoint = `${baseUrl}/images/generations`;
+
+        const sizeParam = selectedSize === "custom" ? `${customWidth}x${customHeight}` : selectedSize;
+        const body: Record<string, any> = {
+          model: settingsModel,
+          prompt: prompt,
+          n: batchCount,
+          size: sizeParam,
+          response_format: "b64_json",
+        };
+
+        if (isGptImage2) {
+          body.quality = selectedQuality; // 'auto', 'standard', 'high'
+          body.background = gptImage2Background; // 'auto', 'opaque'
+        } else {
+          // DALL-E 3 only supports 'standard' or 'hd'
+          body.quality = selectedQuality === "high" || selectedQuality === "hd" || selectedQuality === "ultra" ? "hd" : "standard";
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `OpenAI request failed: status ${res.status}`);
+        }
+
+        const data = await res.json();
+        const newImages = data.data.map((img: any, i: number) => {
+          const id = Date.now() + i;
+          const imgUrl = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;
+          return {
+            id,
+            url: imgUrl,
+            prompt: prompt,
+            date: new Date().toISOString().split("T")[0],
+            size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+            model: settingsModel,
+            favorite: false,
+          };
+        });
+
+        setGeneratedImages((prev) => [...newImages, ...prev]);
+        saveGenerationsToLocalStorage(newImages);
+      } else if (settingsProvider === "stability") {
+        const baseUrl = apiBaseUrl || "https://api.stability.ai/v2beta";
+        const endpoint = `${baseUrl}/stable-image/generate/core`;
+
+        const formData = new FormData();
+        formData.append("prompt", prompt);
+        formData.append("output_format", "webp");
+        
+        let aspect = "1:1";
+        if (selectedSize === "1024x1792" || selectedSize === "2160x3840") aspect = "9:16";
+        else if (selectedSize === "1792x1024" || selectedSize === "3840x2160" || selectedSize === "1920x1080") aspect = "16:9";
+        formData.append("aspect_ratio", aspect);
+
+        if (referenceImages.length > 0 && referenceImages[0].file) {
+          formData.append("image", referenceImages[0].file);
+          formData.append("strength", "0.7");
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Accept": "application/json"
+          },
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.errors?.[0] || errData.message || `Stability request failed: status ${res.status}`);
+        }
+
+        const data = await res.json();
+        const newImages = [{
+          id: Date.now(),
+          url: `data:image/webp;base64,${data.image}`,
+          prompt: prompt,
+          date: new Date().toISOString().split("T")[0],
+          size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+          model: settingsModel,
+          favorite: false,
+        }];
+
+        setGeneratedImages((prev) => [...newImages, ...prev]);
+        saveGenerationsToLocalStorage(newImages);
+      } else if (settingsProvider === "replicate") {
+        const baseUrl = apiBaseUrl || "https://api.replicate.com/v1";
+        const endpoint = `${baseUrl}/predictions`;
+
+        const body: Record<string, any> = {
+          version: settingsModel.includes("flux-1.1-pro") 
+            ? "flux-1.1-pro" 
+            : settingsModel.includes("flux-schnell")
+            ? "flux-schnell"
+            : "sdxl",
+          input: {
+            prompt: prompt,
+          }
+        };
+
+        if (referenceImages.length > 0 && referenceImages[0].file) {
+          const base64 = await convertFileToBase64(referenceImages[0].file);
+          body.input.image = base64;
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Token ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `Replicate prediction failed: status ${res.status}`);
+        }
+
+        const prediction = await res.json();
+        let pollUrl = prediction.urls.get || `${baseUrl}/predictions/${prediction.id}`;
+        let completedPrediction = prediction;
+        let attempts = 0;
+
+        while (completedPrediction.status !== "succeeded" && completedPrediction.status !== "failed" && attempts < 30) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const pollRes = await fetch(pollUrl, {
+            headers: {
+              "Authorization": `Token ${apiKey}`,
+            }
+          });
+          if (pollRes.ok) {
+            completedPrediction = await pollRes.json();
+          }
+          attempts++;
+        }
+
+        if (completedPrediction.status === "succeeded") {
+          const outputUrls = Array.isArray(completedPrediction.output) 
+            ? completedPrediction.output 
+            : [completedPrediction.output];
+          
+          const newImages = outputUrls.map((url: string, i: number) => ({
+            id: Date.now() + i,
+            url: url,
+            prompt: prompt,
+            date: new Date().toISOString().split("T")[0],
+            size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+            model: settingsModel,
+            favorite: false,
+          }));
+
+          setGeneratedImages((prev) => [...newImages, ...prev]);
+          saveGenerationsToLocalStorage(newImages);
+        } else {
+          throw new Error(`Replicate prediction failed: ${completedPrediction.error || "unknown error"}`);
+        }
+      }
+    } catch (error: any) {
+      console.error("API Call error:", error);
+      alert(`API Error: ${error.message}`);
+    } finally {
       setIsGenerating(false);
-    }, 1500);
+    }
   };
 
   const generateLabel =

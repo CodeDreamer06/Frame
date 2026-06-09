@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import Sidebar from "../components/Sidebar";
@@ -155,7 +155,26 @@ export default function Gallery() {
   const [activeFilter, setActiveFilter] = useState<FilterValue>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [images, setImages] = useState<GalleryImage[]>(mockImages);
+  const [images, setImages] = useState<GalleryImage[]>([]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem("frame_generations");
+      const localImages = stored ? JSON.parse(stored) : [];
+      const merged = [
+        ...localImages,
+        ...mockImages.map((img) => ({
+          ...img,
+          id: img.id + 100000000,
+        })),
+      ];
+      setImages(merged);
+    } catch (e) {
+      console.error("Failed to load generations in Gallery", e);
+      setImages(mockImages);
+    }
+  }, []);
 
   const filteredImages = useMemo(() => {
     return images.filter((img) => {
@@ -171,7 +190,16 @@ export default function Gallery() {
   }, [images, activeFilter, searchQuery]);
 
   const handleDelete = (id: number) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setImages((prev) => {
+      const updated = prev.filter((img) => img.id !== id);
+      const generatedOnly = updated.filter((img) => img.id < 100000000);
+      try {
+        localStorage.setItem("frame_generations", JSON.stringify(generatedOnly));
+      } catch (e) {
+        console.error("Failed to update generations in Gallery after delete", e);
+      }
+      return updated;
+    });
   };
 
   return (
