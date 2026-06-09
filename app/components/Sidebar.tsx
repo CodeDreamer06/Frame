@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { motion } from "framer-motion";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 const navItems = [
   {
@@ -52,6 +53,43 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Toggle help shortcuts
+      if ((e.metaKey || e.ctrlKey) && e.key === "/") {
+        e.preventDefault();
+        setShowShortcuts((prev) => !prev);
+      }
+
+      // Close modal
+      if (e.key === "Escape") {
+        setShowShortcuts(false);
+      }
+
+      // Navigation shortcuts (Alt + 1, 2, 3, 4)
+      if (e.altKey) {
+        if (e.key === "1") {
+          e.preventDefault();
+          router.push("/");
+        } else if (e.key === "2") {
+          e.preventDefault();
+          router.push("/gallery");
+        } else if (e.key === "3") {
+          e.preventDefault();
+          router.push("/editor");
+        } else if (e.key === "4") {
+          e.preventDefault();
+          router.push("/settings");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [router]);
 
   return (
     <aside className="w-[220px] min-h-screen bg-paper-2 border-r border-rule flex flex-col shrink-0">
@@ -120,6 +158,16 @@ export default function Sidebar() {
         })}
       </nav>
 
+      {/* Shortcuts trigger info at bottom */}
+      <div className="px-5 py-2 text-[10px] text-neutral border-t border-rule/50">
+        <div className="flex items-center justify-between">
+          <span>Shortcuts help</span>
+          <kbd className="px-1 py-0.5 font-mono text-[9px] bg-paper-3 border border-rule-2 rounded text-muted shadow-xs">
+            ⌘ /
+          </kbd>
+        </div>
+      </div>
+
       {/* Bottom section */}
       <div className="p-3 border-t border-rule">
         <div className="flex items-center gap-3 px-3 py-2.5">
@@ -132,6 +180,122 @@ export default function Sidebar() {
           </div>
         </div>
       </div>
+
+      {/* Shortcuts Modal dialog */}
+      <ShortcutsModal isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} />
     </aside>
+  );
+}
+
+/* ── Shortcuts Modal dialog ────────────────────────────────── */
+
+function ShortcutsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/60 backdrop-blur-xs"
+          />
+
+          {/* Dialog Container */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 8 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="relative w-full max-w-md bg-paper-2 border border-rule rounded-xl shadow-2xl overflow-hidden p-5 z-10"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 border-b border-rule pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-sm bg-accent" />
+                <h2 className="font-display text-base font-semibold text-ink">
+                  Keyboard Shortcuts
+                </h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="text-neutral hover:text-ink hover:bg-paper-3 p-1 rounded-md transition-colors"
+                aria-label="Close dialog"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="space-y-5 max-h-[350px] overflow-y-auto pr-1">
+              {/* Navigation Group */}
+              <div>
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-neutral mb-2">
+                  Navigation
+                </h3>
+                <div className="grid grid-cols-1 gap-1">
+                  <ShortcutRow keys={["⌥", "1"]} desc="Go to Studio" />
+                  <ShortcutRow keys={["⌥", "2"]} desc="Go to Gallery" />
+                  <ShortcutRow keys={["⌥", "3"]} desc="Go to Editor" />
+                  <ShortcutRow keys={["⌥", "4"]} desc="Go to Settings" />
+                </div>
+              </div>
+
+              {/* Studio Actions Group */}
+              <div>
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-neutral mb-2">
+                  Studio Page
+                </h3>
+                <div className="grid grid-cols-1 gap-1">
+                  <ShortcutRow keys={["⌘", "Enter"]} desc="Generate image(s)" />
+                  <ShortcutRow keys={["⌥", "P"]} desc="Focus Prompt Input" />
+                  <ShortcutRow keys={["⌥", "N"]} desc="Toggle Negative Prompt" />
+                  <ShortcutRow keys={["⌥", "C"]} desc="Cycle Canvas presets" />
+                  <ShortcutRow keys={["⌥", "Q"]} desc="Cycle Quality options" />
+                  <ShortcutRow keys={["⌥", "S"]} desc="Cycle Style options" />
+                  <ShortcutRow keys={["⌥", "B"]} desc="Focus Batch slider" />
+                </div>
+              </div>
+
+              {/* General Group */}
+              <div>
+                <h3 className="text-[10px] font-semibold uppercase tracking-wider text-neutral mb-2">
+                  General
+                </h3>
+                <div className="grid grid-cols-1 gap-1">
+                  <ShortcutRow keys={["⌘", "/"]} desc="Toggle Shortcuts Help" />
+                  <ShortcutRow keys={["Esc"]} desc="Close Modal" />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function ShortcutRow({ keys, desc }: { keys: string[]; desc: string }) {
+  return (
+    <div className="flex items-center justify-between text-xs py-1.5 border-b border-rule/20 last:border-0">
+      <span className="text-muted">{desc}</span>
+      <div className="flex gap-1 shrink-0">
+        {keys.map((k, i) => (
+          <kbd
+            key={i}
+            className="px-1.5 py-0.5 min-w-[18px] text-center font-mono text-[9px] bg-paper-3 border border-rule-2 rounded text-ink font-semibold shadow-xs"
+          >
+            {k}
+          </kbd>
+        ))}
+      </div>
+    </div>
   );
 }

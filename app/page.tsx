@@ -272,13 +272,29 @@ export default function Studio() {
       console.error("Failed to save generations to local storage", e);
     }
   };
+  const batchSliderRef = useRef<HTMLInputElement>(null);
 
-  const convertFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
+  const cycleCanvasSize = () => {
+    setSelectedSize((current) => {
+      const idx = sizePresets.findIndex((p) => p.value === current);
+      const nextIdx = (idx + 1) % sizePresets.length;
+      return sizePresets[nextIdx].value;
+    });
+  };
+
+  const cycleQuality = () => {
+    setSelectedQuality((current) => {
+      const idx = qualityOptions.findIndex((o) => o.value === current);
+      const nextIdx = (idx + 1) % qualityOptions.length;
+      return qualityOptions[nextIdx].value;
+    });
+  };
+
+  const cycleStyle = () => {
+    setSelectedStyle((current) => {
+      const idx = styleOptions.findIndex((s) => s.value === current);
+      const nextIdx = (idx + 1) % styleOptions.length;
+      return styleOptions[nextIdx].value;
     });
   };
 
@@ -289,6 +305,94 @@ export default function Studio() {
     el.style.height = "auto";
     el.style.height = `${Math.max(120, el.scrollHeight)}px`;
   }, [prompt]);
+
+  /* Keyboard shortcuts */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. Generate (Command/Ctrl + Enter)
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleGenerate();
+      }
+
+      // 2. Focus prompt (Alt + P)
+      if (e.altKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        textareaRef.current?.focus();
+      }
+
+      // 3. Toggle negative prompt (Alt + N)
+      if (e.altKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setShowNegative((prev) => !prev);
+      }
+
+      // 4. Cycle Canvas presets (Alt + C)
+      if (e.altKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        cycleCanvasSize();
+      }
+
+      // 5. Cycle Quality options (Alt + Q)
+      if (e.altKey && e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        cycleQuality();
+      }
+
+      // 6. Cycle Style options (Alt + S)
+      if (e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        cycleStyle();
+      }
+
+      // 7. Focus Batch slider (Alt + B)
+      if (e.altKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        batchSliderRef.current?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    prompt,
+    batchCount,
+    selectedSize,
+    selectedQuality,
+    selectedStyle,
+    customWidth,
+    customHeight,
+    gptImage2Background,
+    isDragging,
+    referenceImages,
+    provider,
+    selectedModel
+  ]);
+
+  const convertFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
+  const convertUrlToBase64 = async (url: string): Promise<string> => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.error("Failed to convert image URL to base64", e);
+      return url; // fallback to raw URL
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -349,13 +453,15 @@ export default function Studio() {
           prompt: prompt,
           n: batchCount,
           size: sizeParam,
-          response_format: "b64_json",
         };
 
-        if (isGptImage2) {
+        const isGptImage = settingsModel.toLowerCase().includes("gpt-image");
+
+        if (isGptImage) {
           body.quality = selectedQuality; // 'auto', 'standard', 'high'
           body.background = gptImage2Background; // 'auto', 'opaque'
         } else {
+          body.response_format = "b64_json";
           // DALL-E 3 only supports 'standard' or 'hd'
           body.quality = selectedQuality === "high" || selectedQuality === "hd" || selectedQuality === "ultra" ? "hd" : "standard";
         }
@@ -375,19 +481,29 @@ export default function Studio() {
         }
 
         const data = await res.json();
-        const newImages = data.data.map((img: any, i: number) => {
-          const id = Date.now() + i;
-          const imgUrl = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;
-          return {
-            id,
-            url: imgUrl,
-            prompt: prompt,
-            date: new Date().toISOString().split("T")[0],
-            size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
-            model: settingsModel,
-            favorite: false,
-          };
-        });
+        
+        // Convert URLs or b64_json to base64 for local storage persistence
+        const newImages = await Promise.all(
+          data.data.map(async (img: any, i: number) => {
+            const id = Date.now() + i;
+            let imgUrl = img.b64_json ? `data:image/png;base64,${img.b64_json}` : img.url;
+
+            // Fetch and convert raw URLs to base64 to prevent them from expiring
+            if (img.url && !img.b64_json) {
+              imgUrl = await convertUrlToBase64(img.url);
+            }
+
+            return {
+              id,
+              url: imgUrl,
+              prompt: prompt,
+              date: new Date().toISOString().split("T")[0],
+              size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+              model: settingsModel,
+              favorite: false,
+            };
+          })
+        );
 
         setGeneratedImages((prev) => [...newImages, ...prev]);
         saveGenerationsToLocalStorage(newImages);
@@ -493,15 +609,20 @@ export default function Studio() {
             ? completedPrediction.output 
             : [completedPrediction.output];
           
-          const newImages = outputUrls.map((url: string, i: number) => ({
-            id: Date.now() + i,
-            url: url,
-            prompt: prompt,
-            date: new Date().toISOString().split("T")[0],
-            size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
-            model: settingsModel,
-            favorite: false,
-          }));
+          const newImages = await Promise.all(
+            outputUrls.map(async (url: string, i: number) => {
+              const base64Url = await convertUrlToBase64(url);
+              return {
+                id: Date.now() + i,
+                url: base64Url,
+                prompt: prompt,
+                date: new Date().toISOString().split("T")[0],
+                size: selectedSize === "custom" ? `${customWidth}×${customHeight}` : selectedSize.replace("x", "×"),
+                model: settingsModel,
+                favorite: false,
+              };
+            })
+          );
 
           setGeneratedImages((prev) => [...newImages, ...prev]);
           saveGenerationsToLocalStorage(newImages);
@@ -956,7 +1077,8 @@ export default function Studio() {
                         {batchCount}
                       </span>
                     </div>
-                    <input
+                     <input
+                      ref={batchSliderRef}
                       type="range"
                       min="1"
                       max={isGptImage2 ? "10" : "8"}
@@ -964,7 +1086,7 @@ export default function Studio() {
                       onChange={(e) =>
                         setBatchCount(Number(e.target.value))
                       }
-                      className="w-full h-1 rounded-full appearance-none bg-rule-2 accent-accent cursor-pointer"
+                      className="w-full h-1 rounded-full appearance-none bg-rule-2 accent-accent cursor-pointer focus-visible:outline-accent"
                     />
                   </div>
                 </Section>
